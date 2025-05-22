@@ -1,0 +1,6 @@
+[submodule "lib/InputBot"]
+	path = lib/InputBot
+	url = https://github.com/CanadianBaconBoi/InputBot
+[submodule "lib/enum-map"]
+	path = lib/enum-map
+	url = https://github.com/CanadianBaconBoi/enum-map-fork

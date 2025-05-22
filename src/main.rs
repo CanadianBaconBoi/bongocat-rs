@@ -1,72 +1,47 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
+#![feature(stmt_expr_attributes)]
 
-// When compiling natively:
-#[cfg(not(target_arch = "wasm32"))]
+use bongocat_rs::app::BongoApp;
+use bongocat_rs::{WINDOW_HEIGHT, WINDOW_WIDTH};
+use display_info::DisplayInfo;
+use egui::WindowLevel;
+
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
+    let displays = DisplayInfo::all().unwrap();
+    let primary = displays.iter().find(|d| d.is_primary).unwrap_or_else(|| {
+        displays
+            .first()
+            .unwrap_or_else(|| panic!("Could not find primary display"))
+    });
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([400.0, 300.0])
-            .with_min_inner_size([300.0, 220.0])
+            .with_transparent(true)
+            .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
+            .with_min_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
+            .with_max_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
+            .with_always_on_top()
+            .with_mouse_passthrough(true)
+            .with_window_level(WindowLevel::AlwaysOnTop)
+            .with_resizable(false)
             .with_icon(
-                // NOTE: Adding an icon is optional
                 eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
                     .expect("Failed to load icon"),
-            ),
+            )
+            .with_position([
+                (primary.x + (primary.height as i32)) as f32 - WINDOW_HEIGHT,
+                (primary.y + (primary.width as i32 / 2)) as f32 - WINDOW_WIDTH / 2.0,
+            ])
+            .with_drag_and_drop(false),
         ..Default::default()
     };
+
     eframe::run_native(
-        "eframe template",
+        "Bongocat",
         native_options,
-        Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(BongoApp::new(cc)))),
     )
-}
-
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use eframe::wasm_bindgen::JsCast as _;
-
-    // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-
-    let web_options = eframe::WebOptions::default();
-
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
-
-        let canvas = document
-            .get_element_by_id("the_canvas_id")
-            .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("the_canvas_id was not a HtmlCanvasElement");
-
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| Ok(Box::new(eframe_template::TemplateApp::new(cc)))),
-            )
-            .await;
-
-        // Remove the loading text and spinner:
-        if let Some(loading_text) = document.get_element_by_id("loading_text") {
-            match start_result {
-                Ok(_) => {
-                    loading_text.remove();
-                }
-                Err(e) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
-                    panic!("Failed to start eframe: {e:?}");
-                }
-            }
-        }
-    });
 }
