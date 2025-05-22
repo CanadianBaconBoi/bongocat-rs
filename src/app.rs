@@ -1,15 +1,22 @@
-use crate::theme::{AppTheme, ThemeSet};
-use crate::{KEY_PRESSED_LIT_DELAY, KEYS, WINDOW_HEIGHT, WINDOW_WIDTH};
+use crate::theme::{AppThemeImage, AppThemeTexture, ThemeSet};
+use crate::{KEY_PRESSED_LIT_DELAY, KEYS, UV_RECT, WINDOW_HEIGHT, WINDOW_RECT, WINDOW_WIDTH};
 use dashmap::DashMap;
 use eframe::epaint::{Pos2, RectShape, TextShape, text::LayoutJob};
-use egui::{Color32, Context, FontFamily, FontId, Rect, Shape, Stroke, StrokeKind};
+use egui::{
+    Color32, ColorImage, Context, FontFamily, FontId, Rect, Shape, Stroke, StrokeKind,
+    TextureHandle, TextureId, TextureOptions,
+};
 use enum_map::EnumMap;
+use image::DynamicImage;
 use inputbot::KeybdKey;
 use parking_lot::{Mutex, RwLock};
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicUsize, Ordering},
 };
+use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{default::Default, ops::Add, thread, time::Instant};
 
@@ -19,10 +26,19 @@ use std::{default::Default, ops::Add, thread, time::Instant};
 pub struct BongoApp {
     /// Theme (bongocat images) to be used
     #[serde(skip)]
-    theme: RwLock<ThemeSet>,
+    themes: RwLock<ThemeSet>,
     /// Access to the eGui `Context` from other threads
     #[serde(skip)]
     context_access: OnceLock<Context>,
+    /// `JoinHandle`s for threads spunup
+    #[serde(skip)]
+    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    /// Notifies threads of exiting
+    #[serde(skip)]
+    exit_notify: Arc<AtomicBool>,
+    /// Are they rendered yet?
+    #[serde(skip)]
+    themes_rendered: bool,
     /// Keystroke related state
     keystroke_state: Arc<KeystrokeState>,
 }
@@ -30,11 +46,12 @@ pub struct BongoApp {
 impl Default for BongoApp {
     fn default() -> Self {
         Self {
-            theme: RwLock::new(ThemeSet {
-                themes: Vec::from([AppTheme::default(), AppTheme::new("assets/frames/o")]),
-            }),
+            themes: RwLock::new(ThemeSet::default()),
             keystroke_state: Arc::default(),
             context_access: OnceLock::default(),
+            handles: Arc::default(),
+            exit_notify: Arc::default(),
+            themes_rendered: false,
         }
     }
 }
@@ -96,6 +113,7 @@ impl BongoApp {
         let this: Self;
 
         egui_extras::install_image_loaders(&cc.egui_ctx);
+
         if let Some(storage) = cc.storage {
             this = eframe::get_value(storage, eframe::APP_KEY).unwrap_or_default();
         } else {
@@ -108,47 +126,132 @@ impl BongoApp {
         );
 
         let arc_this = Arc::new(Self {
-            theme: RwLock::new(this.theme.read().clone()),
+            themes: RwLock::new(this.themes.read().clone()),
             context_access: this.context_access.clone(),
+            handles: this.handles.clone(),
+            exit_notify: this.exit_notify.clone(),
+            themes_rendered: false,
             keystroke_state: this.keystroke_state.clone(),
         });
 
         for key in &KEYS {
             for key in *key {
-                let arc_this = arc_this.clone();
+                let arc_clone = arc_this.clone();
                 key.key.bind(move || {
-                    Self::log_key(&arc_this.clone(), &key.key);
+                    Self::log_key(&arc_clone, &key.key);
                 });
             }
         }
 
-        thread::spawn(|| {
+        arc_this.handles.lock().push(thread::spawn(|| {
             inputbot::handle_input_events(true);
-        });
+        }));
 
-        let arc_state = this.keystroke_state.clone();
-        let arc_context = this.context_access.clone();
-        thread::spawn(move || {
+        let arc_clone = arc_this.clone();
+        arc_this.handles.lock().push(thread::spawn(move || {
+            let context = arc_clone.context_access.wait();
             loop {
-                if let Some(deadline) = *arc_state.clone().light_thread_deadline.lock()
+                if arc_clone.exit_notify.load(Ordering::Relaxed) {
+                    return;
+                }
+
+                if let Some(deadline) = *arc_clone.keystroke_state.light_thread_deadline.lock()
                     && let Some(duration) = deadline.checked_duration_since(Instant::now())
                 {
                     thread::sleep(duration);
-                    arc_context.clone().wait().request_repaint();
                 } else {
                     thread::sleep(KEY_PRESSED_LIT_DELAY);
-                    arc_context.clone().wait().request_repaint();
                 }
+
+                context.request_repaint();
             }
-        });
+        }));
+
+        let mut theme_guard = this.themes.write();
+        let themes = theme_guard.themes.clone();
+
+        for theme in themes {
+            theme_guard.themes_loaded.push(AppThemeImage {
+                app_theme: Some(theme.clone()),
+                paws_both: load_color_image_from_path(&theme.paws_both),
+                paws_left: load_color_image_from_path(&theme.paws_left),
+                paws_right: load_color_image_from_path(&theme.paws_right),
+                paws_up: load_color_image_from_path(&theme.paws_up),
+            });
+        }
+
+        let themes_loaded = theme_guard.themes_loaded.clone();
+
+        for theme in themes_loaded.iter() {
+            theme_guard.themes_rendered.push(AppThemeTexture {
+                app_theme_image: theme.clone(),
+                paws_both: None,
+                paws_left: None,
+                paws_right: None,
+                paws_up: None,
+            });
+        }
+        drop(theme_guard);
 
         this
     }
 }
 
+fn load_texture_from_color_image(
+    context: &Context,
+    image: &ColorImage,
+    name: String,
+) -> TextureHandle {
+    context.load_texture(name, image.clone(), TextureOptions::LINEAR)
+}
+
+fn load_color_image_from_path(image: &PathBuf) -> ColorImage {
+    let image = image::ImageReader::open(image).unwrap().decode().unwrap();
+    color_image_from_dynamic(image).unwrap_or_else(|err| {
+        panic!("Failed to load image: {err:?}")
+    })
+}
+
+pub fn color_image_from_dynamic(image: DynamicImage) -> Result<ColorImage, anyhow::Error> {
+    let size = [image.width() as _, image.height() as _];
+    let image_buffer = image.to_rgba8();
+    let pixels = image_buffer.as_flat_samples();
+    Ok(ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()))
+}
+
 const SPACING: u64 = 10;
 impl eframe::App for BongoApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
+        if !self.themes_rendered {
+            let mut theme_guard = self.themes.write();
+            for i in 0..theme_guard.themes_rendered.len() {
+                let theme = theme_guard.themes_rendered.get_mut(i).unwrap();
+                let app_theme = &theme.app_theme_image;
+                theme.paws_both.get_or_insert(load_texture_from_color_image(
+                    ctx,
+                    &app_theme.paws_both,
+                    format!("paws_both_{i}"),
+                ));
+                theme.paws_left.get_or_insert(load_texture_from_color_image(
+                    ctx,
+                    &app_theme.paws_left,
+                    format!("paws_left_{i}"),
+                ));
+                theme.paws_right.get_or_insert(load_texture_from_color_image(
+                    ctx,
+                    &app_theme.paws_right,
+                    format!("paws_right_{i}"),
+                ));
+                theme.paws_up.get_or_insert(load_texture_from_color_image(
+                    ctx,
+                    &app_theme.paws_up,
+                    format!("paws_up_{i}"),
+                ));
+            }
+            drop(theme_guard);
+            self.themes_rendered = true;
+        }
+
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
@@ -159,14 +262,14 @@ impl eframe::App for BongoApp {
                 let mut left_side_down = false;
                 let mut right_side_down = false;
 
-                let mut y_off = 0;
+                let mut row_off = 0;
 
                 let mut is_o_face = false;
 
                 let mut shape_holder: Vec<Shape> = Vec::new();
 
                 for y in (0..KEYS.len()).rev() {
-                    let mut x_off = 0;
+                    let mut col_off = 0;
                     for x in (0..KEYS[y].len()).rev() {
                         let key = &KEYS[y][x];
                         let size_offset = key.size * 10.0;
@@ -182,12 +285,12 @@ impl eframe::App for BongoApp {
                         let shape = RectShape::new(
                             Rect::from_min_max(
                                 Pos2::new(
-                                    (10 + x_off) as f32,
-                                    ((WINDOW_HEIGHT as u64 - 70) + y_off) as f32,
+                                    (10 + col_off) as f32,
+                                    ((WINDOW_HEIGHT as u64 - 70) + row_off) as f32,
                                 ),
                                 Pos2::new(
-                                    10.0 + size_offset + x_off as f32,
-                                    ((WINDOW_HEIGHT as u64 - 70 + SPACING) + y_off) as f32,
+                                    10.0 + size_offset + col_off as f32,
+                                    ((WINDOW_HEIGHT as u64 - 70 + SPACING) + row_off) as f32,
                                 ),
                             ),
                             0.5,
@@ -197,6 +300,8 @@ impl eframe::App for BongoApp {
                                     if Instant::now().duration_since(*last_pressed)
                                         <= KEY_PRESSED_LIT_DELAY
                                     {
+                                        // Position the center of the keyboard in the middle of the QWERTY layout
+                                        // We assume keyboard is Full-Length
                                         if x > KEYS[y].len() / 3 {
                                             right_side_down = true;
                                         } else {
@@ -217,11 +322,13 @@ impl eframe::App for BongoApp {
                             Stroke::new(1.0, color),
                             StrokeKind::Middle,
                         );
-                        x_off += (SPACING as f32 * key.size) as u64;
+                        col_off += (SPACING as f32 * key.size) as u64;
                         shape_holder.push(shape.into());
                     }
-                    y_off += SPACING;
+                    row_off += SPACING;
                 }
+
+                ui.painter().add(Shape::Vec(shape_holder));
 
                 ui.painter().add(
                     TextShape::new(
@@ -240,80 +347,50 @@ impl eframe::App for BongoApp {
                     .with_angle(0.231_605_19),
                 );
 
-                if is_o_face && self.theme.read().themes.len() > 1 {
-                    if left_side_down && right_side_down {
-                        ui.add(
-                            self.theme.read().themes[1]
-                                .paws_both
-                                .clone()
-                                .max_width(WINDOW_WIDTH),
-                        );
-                    } else if left_side_down {
-                        ui.add(
-                            self.theme.read().themes[1]
-                                .paws_left
-                                .clone()
-                                .max_width(WINDOW_WIDTH),
-                        );
-                    } else if right_side_down {
-                        ui.add(
-                            self.theme.read().themes[1]
-                                .paws_right
-                                .clone()
-                                .max_width(WINDOW_WIDTH),
-                        );
-                    } else {
-                        ui.add(
-                            self.theme.read().themes[1]
-                                .paws_up
-                                .clone()
-                                .max_width(WINDOW_WIDTH),
-                        );
-                    }
-                } else if left_side_down && right_side_down {
-                    ui.add(
-                        self.theme
-                            .read()
-                            .first()
-                            .paws_both
-                            .clone()
-                            .max_width(WINDOW_WIDTH),
-                    );
-                } else if left_side_down {
-                    ui.add(
-                        self.theme
-                            .read()
-                            .first()
-                            .paws_left
-                            .clone()
-                            .max_width(WINDOW_WIDTH),
-                    );
-                } else if right_side_down {
-                    ui.add(
-                        self.theme
-                            .read()
-                            .first()
-                            .paws_right
-                            .clone()
-                            .max_width(WINDOW_WIDTH),
-                    );
+                let themes = self.themes.read();
+                let theme = if is_o_face {
+                    themes.themes_rendered.get(1).or_else(|| {themes.themes_rendered.first()})
                 } else {
-                    ui.add(
-                        self.theme
-                            .read()
-                            .first()
-                            .paws_up
-                            .clone()
-                            .max_width(WINDOW_WIDTH),
-                    );
-                }
+                    themes.themes_rendered.first()
+                };
 
-                ui.painter().add(Shape::Vec(shape_holder));
+                if let Some(theme) = theme {
+                    let id = if left_side_down && right_side_down {
+                        if let Some(paws_both) = &theme.paws_both {
+                            paws_both.id()
+                        } else {
+                            TextureId::Managed(0)
+                        }
+                    } else if left_side_down {
+                        if let Some(paws_left) = &theme.paws_left {
+                            paws_left.id()
+                        } else {
+                            TextureId::Managed(0)
+                        }
+                    } else if right_side_down {
+                        if let Some(paws_right) = &theme.paws_right {
+                            paws_right.id()
+                        } else {
+                            TextureId::Managed(0)
+                        }
+                    } else if let Some(paws_up) = &theme.paws_up {
+                        paws_up.id()
+                    } else {
+                        TextureId::Managed(0)
+                    };
+
+                    ui.painter().image(id, WINDOW_RECT, UV_RECT, Color32::WHITE);
+                }
             });
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.exit_notify.store(true, Ordering::Relaxed);
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::TRANSPARENT.to_array()
     }

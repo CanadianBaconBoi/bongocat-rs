@@ -29,6 +29,8 @@ enum-map = {version = "3.0.0-beta.2", features = ["serde"]}
 
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
+image = {version = "0.25.6", features = ["serde"]}
+anyhow = "1.0.98"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
