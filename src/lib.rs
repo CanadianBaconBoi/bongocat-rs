@@ -624,9 +624,14 @@ pub struct VisualKeybdKeyHolder {
 }
 
 pub const WINDOW_HEIGHT: f32 = WINDOW_WIDTH;
-pub const KEY_PRESSED_LIT_DELAY: Duration = Duration::from_millis(250);
+pub const WINDOW_RECT: egui::Rect = egui::Rect::from_min_max(
+    egui::Pos2::ZERO,
+    egui::Pos2::new(WINDOW_WIDTH, WINDOW_HEIGHT),
+);
+pub const UV_RECT: egui::Rect =
+    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0));
+pub const KEY_PRESSED_LIT_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 pub mod app;
 mod theme;
 
 use inputbot::KeybdKey;
-use std::time::Duration;
