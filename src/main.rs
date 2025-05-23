@@ -15,26 +15,28 @@ fn main() -> eframe::Result {
         displays
             .first()
             .unwrap_or_else(|| panic!("Could not find primary display"))
-    });
+    }).clone();
 
     let native_options = eframe::NativeOptions {
+        window_builder: Some(Box::new(move |builder|{
+            builder.with_position([
+                (primary.x + (primary.width as i32)) as f32 - WINDOW_HEIGHT,
+                (primary.y + (primary.height as i32)) as f32 - WINDOW_WIDTH,
+            ])
+        })),
         viewport: egui::ViewportBuilder::default()
             .with_transparent(true)
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_min_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_max_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_always_on_top()
-            .with_mouse_passthrough(true)
+            .with_decorations(false)
             .with_window_level(WindowLevel::AlwaysOnTop)
             .with_resizable(false)
             .with_icon(
                 eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
                     .expect("Failed to load icon"),
             )
-            .with_position([
-                (primary.x + (primary.height as i32)) as f32 - WINDOW_HEIGHT,
-                (primary.y + (primary.width as i32 / 2)) as f32 - WINDOW_WIDTH / 2.0,
-            ])
             .with_drag_and_drop(false),
         ..Default::default()
     };
