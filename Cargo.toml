@@ -1,6 +1,6 @@
 [package]
 name = "bongocat-rs"
-version = "0.0.4"
+version = "0.0.5"
 authors = ["CanadianBacon <bc.bacon.bits@gmail.com>"]
 edition = "2024"
 include = ["LICENSE-APACHE", "LICENSE-MIT", "**/*.rs", "Cargo.toml"]
