@@ -18,7 +18,6 @@ use egui::{
 };
 use inputbot::KeybdKey;
 use std::rc::Rc;
-use std::time::Instant;
 use std::{
     cell::UnsafeCell,
     default::Default,

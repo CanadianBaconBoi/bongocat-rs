@@ -325,7 +325,6 @@ dependencies = [
  "env_logger",
  "image 0.25.6",
  "inputbot",
- "log",
  "parking_lot",
  "serde",
 ]
