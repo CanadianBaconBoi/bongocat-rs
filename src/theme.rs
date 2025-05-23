@@ -3,7 +3,6 @@ use egui::{ColorImage, TextureHandle};
 use image::ImageFormat;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone)]
 pub struct ThemeSet {
     pub themes: Vec<AppTheme>,
     pub themes_loaded: Vec<AppThemeImage>,
@@ -85,18 +84,16 @@ impl Default for ThemeSet {
     }
 }
 
-#[derive(Clone)]
 pub struct AppThemeTexture {
-    pub app_theme_image: AppThemeImage,
+    pub app_theme_image: &'static AppThemeImage,
     pub paws_both: Option<TextureHandle>,
     pub paws_left: Option<TextureHandle>,
     pub paws_right: Option<TextureHandle>,
     pub paws_up: Option<TextureHandle>,
 }
 
-#[derive(Clone, Debug)]
 pub struct AppThemeImage {
-    pub app_theme: Option<AppTheme>,
+    pub app_theme: Option<&'static AppTheme>,
     pub id: String,
     pub paws_both: ColorImage,
     pub paws_left: ColorImage,
@@ -104,7 +101,6 @@ pub struct AppThemeImage {
     pub paws_up: ColorImage,
 }
 
-#[derive(Clone, Debug)]
 pub struct AppTheme {
     pub paws_both: PathBuf,
     pub paws_left: PathBuf,

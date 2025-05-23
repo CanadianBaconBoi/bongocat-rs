@@ -9,13 +9,13 @@ use crate::consts::keyboard::*;
 use crate::theme::{AppThemeImage, AppThemeTexture, ThemeSet};
 use dashmap::DashMap;
 use eframe::epaint::{Pos2, RectShape, TextShape, text::LayoutJob};
-use egui::{Color32, Context, FontFamily, FontId, Rect, Shape, Stroke, StrokeKind, TextureId};
+use egui::{Color32, Context, FontFamily, FontId, LayerId, Rect, Stroke, StrokeKind, TextureId};
 use inputbot::KeybdKey;
 use parking_lot::RwLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, OnceLock, atomic::Ordering};
-use std::thread::JoinHandle;
-use std::{default::Default, thread, time::Instant};
+use std::thread::{JoinHandle, Thread};
+use std::{default::Default, thread};
 
 /// The main application state
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -23,7 +23,7 @@ use std::{default::Default, thread, time::Instant};
 pub struct BongoApp {
     /// Theme (bongocat images) to be used
     #[serde(skip)]
-    themes: RwLock<ThemeSet>,
+    themes: Arc<RwLock<ThemeSet>>,
     /// Access to the eGui `Context` from other threads
     #[serde(skip)]
     context_access: OnceLock<Context>,
@@ -36,19 +36,23 @@ pub struct BongoApp {
     /// Are they rendered yet?
     #[serde(skip)]
     themes_rendered: bool,
-    /// Keystroke related state
+    /// Holds shapes we don't want to keep redrawing
+    #[serde(skip)]
+    shape_holder: Arc<RwLock<Vec<(&'static VisualKeybdKeyHolder, Rect)>>>,
+    /// Keystroke-related state
     keystroke_state: Arc<KeystrokeState>,
 }
 
 impl Default for BongoApp {
     fn default() -> Self {
         Self {
-            themes: RwLock::new(ThemeSet::default()),
+            themes: Arc::default(),
             keystroke_state: Arc::default(),
             context_access: OnceLock::default(),
             handles: Arc::default(),
             exit_notify: Arc::default(),
             themes_rendered: false,
+            shape_holder: Arc::default(),
         }
     }
 }
@@ -80,11 +84,12 @@ impl BongoApp {
         );
 
         let arc_this = Arc::new(Self {
-            themes: RwLock::new(this.themes.read().clone()),
+            themes: this.themes.clone(),
             context_access: this.context_access.clone(),
             handles: this.handles.clone(),
             exit_notify: this.exit_notify.clone(),
             themes_rendered: false,
+            shape_holder: this.shape_holder.clone(),
             keystroke_state: this.keystroke_state.clone(),
         });
 
@@ -102,75 +107,104 @@ impl BongoApp {
         }));
 
         let arc_clone = arc_this.clone();
-        arc_this.insert_handle_autoincrement(thread::spawn(move || {
-            let context = arc_clone.context_access.wait();
-            loop {
-                if arc_clone.exit_notify.load(Ordering::Relaxed) {
-                    return;
+        let _ = this.keystroke_state.input_update_thread.lock().insert(
+            arc_this.insert_handle_autoincrement(thread::spawn(move || {
+                let context = arc_clone.context_access.wait();
+                loop {
+                    if arc_clone.exit_notify.load(Ordering::SeqCst) {
+                        return;
+                    }
+                    thread::park_timeout(KEY_PRESSED_LIT_DELAY);
+                    context.request_repaint();
                 }
-
-                if let Some(deadline) = *arc_clone.keystroke_state.light_thread_deadline.lock()
-                    && let Some(duration) = deadline.checked_duration_since(Instant::now())
-                {
-                    thread::sleep(duration);
-                } else {
-                    thread::sleep(KEY_PRESSED_LIT_DELAY);
-                }
-
-                context.request_repaint();
-            }
-        }));
+            })),
+        );
 
         let arc_clone = arc_this.clone();
         arc_this.insert_handle_autoincrement(thread::spawn(move || {
             let state = arc_clone.keystroke_state.clone();
             loop {
-                if arc_clone.exit_notify.load(Ordering::Relaxed) {
+                if arc_clone.exit_notify.load(Ordering::SeqCst) {
                     return;
                 }
-                thread::park_timeout(LAST_PRESSED_CLEANUP_CHECK_INTERVAL);
-                state.cleanup_outdated(LAST_PRESSED_MAX_AGE);
+                thread::sleep(KEY_PRESSED_CLEANUP_DELAY);
+                state.cleanup_outdated(KEY_PRESSED_LIT_DELAY);
             }
         }));
 
-        let mut theme_guard = this.themes.write();
-        let themes = theme_guard.themes.clone();
+        let theme_clone = arc_this.themes.clone();
+        let theme_ref = theme_clone.data_ptr() as *const ThemeSet;
 
-        for theme in themes {
-            let mut id: [u8; 16] = [0; 16];
-            rand::fill(&mut id);
-            theme_guard.themes_loaded.push(AppThemeImage {
-                app_theme: Some(theme.clone()),
-                id: hex::encode(id),
-                paws_both: load_color_image_from_path(&theme.paws_both),
-                paws_left: load_color_image_from_path(&theme.paws_left),
-                paws_right: load_color_image_from_path(&theme.paws_right),
-                paws_up: load_color_image_from_path(&theme.paws_up),
-            });
+        unsafe {
+            for theme in &(*theme_ref).themes {
+                let mut id: [u8; 16] = [0; 16];
+                rand::fill(&mut id);
+                arc_this.themes.write().themes_loaded.push(AppThemeImage {
+                    app_theme: Some(&theme),
+                    id: hex::encode(id),
+                    paws_both: load_color_image_from_path(&theme.paws_both),
+                    paws_left: load_color_image_from_path(&theme.paws_left),
+                    paws_right: load_color_image_from_path(&theme.paws_right),
+                    paws_up: load_color_image_from_path(&theme.paws_up),
+                });
+            }
+
+            for theme in &(*theme_ref).themes_loaded {
+                arc_this
+                    .themes
+                    .write()
+                    .themes_rendered
+                    .push(AppThemeTexture {
+                        app_theme_image: &theme,
+                        paws_both: None,
+                        paws_left: None,
+                        paws_right: None,
+                        paws_up: None,
+                    });
+            }
         }
 
-        let themes_loaded = theme_guard.themes_loaded.clone();
+        let mut row_off = 0;
+        for y in (0..KEYS.len()).rev() {
+            let mut col_off = 0;
+            for x in (0..KEYS[y].len()).rev() {
+                let key = &KEYS[y][x];
+                let size_offset = key.size * 10.0;
 
-        for theme in themes_loaded.iter() {
-            theme_guard.themes_rendered.push(AppThemeTexture {
-                app_theme_image: theme.clone(),
-                paws_both: None,
-                paws_left: None,
-                paws_right: None,
-                paws_up: None,
-            });
+                arc_this.shape_holder.write().push((
+                    key,
+                    Rect::from_min_max(
+                        Pos2::new(
+                            (10 + col_off) as f32,
+                            ((WINDOW_HEIGHT as u64 - 70) + row_off) as f32,
+                        ),
+                        Pos2::new(
+                            10.0 + size_offset + col_off as f32,
+                            ((WINDOW_HEIGHT as u64 - 70 + PADDING_PIXELS) + row_off) as f32,
+                        ),
+                    ),
+                ));
+
+                col_off += (PADDING_PIXELS as f32 * key.size) as u64;
+            }
+            row_off += PADDING_PIXELS;
         }
-        drop(theme_guard);
 
         this
     }
 
-    pub fn insert_handle_autoincrement(&self, handle: JoinHandle<()>) {
+    pub fn insert_handle_autoincrement(&self, handle: JoinHandle<()>) -> Thread {
         let id = self.handles.len();
+        let thread = handle.thread().clone();
         self.handles.insert(id, Some(handle));
+
+        thread
     }
-    pub fn insert_handle(&self, id: usize, handle: JoinHandle<()>) {
+    pub fn insert_handle(&self, id: usize, handle: JoinHandle<()>) -> Thread {
+        let thread = handle.thread().clone();
         self.handles.insert(id, Some(handle));
+
+        thread
     }
 
     pub fn cleanup_handles(&self) {
@@ -219,146 +253,117 @@ impl eframe::App for BongoApp {
             self.themes_rendered = true;
         }
 
-        egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::TRANSPARENT)
-                    .stroke(Stroke::new(0.0, Color32::TRANSPARENT)),
-            )
-            .show(ctx, |ui| {
-                let mut left_side_down = false;
-                let mut right_side_down = false;
+        let painter = ctx.layer_painter(LayerId::background());
 
-                let mut row_off = 0;
+        let mut left_side_down = false;
+        let mut right_side_down = false;
+        let mut is_o_face = false;
 
-                let mut is_o_face = false;
+        for (key, rect) in self.shape_holder.read().iter() {
+            let rect = rect.clone();
 
-                let mut shape_holder: Vec<Shape> = Vec::new();
-
-                for y in (0..KEYS.len()).rev() {
-                    let mut col_off = 0;
-                    for x in (0..KEYS[y].len()).rev() {
-                        let key = &KEYS[y][x];
-                        let size_offset = key.size * 10.0;
-                        let color = if let KeybdKey::OtherKey(code) = key.key {
-                            if code == u64::MAX - 1 {
-                                Color32::TRANSPARENT
-                            } else {
-                                Color32::WHITE
-                            }
-                        } else {
-                            Color32::WHITE
-                        };
-                        let shape = RectShape::new(
-                            Rect::from_min_max(
-                                Pos2::new(
-                                    (10 + col_off) as f32,
-                                    ((WINDOW_HEIGHT as u64 - 70) + row_off) as f32,
-                                ),
-                                Pos2::new(
-                                    10.0 + size_offset + col_off as f32,
-                                    ((WINDOW_HEIGHT as u64 - 70 + PADDING_PIXELS) + row_off) as f32,
-                                ),
-                            ),
-                            0.5,
-                            self.keystroke_state.last_pressed_map.get(&key.key).map_or(
-                                Color32::TRANSPARENT,
-                                |last_pressed| {
-                                    if Instant::now().duration_since(*last_pressed)
-                                        <= KEY_PRESSED_LIT_DELAY
-                                    {
-                                        // Position the center of the keyboard in the middle of the QWERTY layout
-                                        // We assume keyboard is Full-Length
-                                        if x > KEYS[y].len() / 3 {
-                                            right_side_down = true;
-                                        } else {
-                                            left_side_down = true;
-                                        }
-                                        if key.key == KeybdKey::OKey
-                                            || key.key == KeybdKey::Numrow0Key
-                                            || key.key == KeybdKey::Numpad0Key
-                                        {
-                                            is_o_face = true;
-                                        }
-                                        Color32::LIGHT_BLUE
-                                    } else {
-                                        Color32::TRANSPARENT
-                                    }
-                                },
-                            ),
-                            Stroke::new(1.0, color),
-                            StrokeKind::Middle,
-                        );
-                        col_off += (PADDING_PIXELS as f32 * key.size) as u64;
-                        shape_holder.push(shape.into());
-                    }
-                    row_off += PADDING_PIXELS;
-                }
-
-                ui.painter().add(Shape::Vec(shape_holder));
-
-                ui.painter().add(
-                    TextShape::new(
-                        Pos2::new(WINDOW_WIDTH / 20.0, WINDOW_HEIGHT / 2.0),
-                        ui.painter().layout_job(LayoutJob::simple(
-                            format!(
-                                "{}",
-                                self.keystroke_state.keystrokes.load(Ordering::Relaxed)
-                            ),
-                            FontId::new(WINDOW_HEIGHT / 12.5, FontFamily::Proportional),
-                            Color32::WHITE,
-                            f32::MAX,
-                        )),
-                        Color32::PLACEHOLDER,
-                    )
-                    .with_angle(0.231_605_19),
-                );
-
-                let themes = self.themes.read();
-                let theme = if is_o_face {
-                    themes
-                        .themes_rendered
-                        .get(1)
-                        .or_else(|| themes.themes_rendered.first())
+            let color = if let KeybdKey::OtherKey(code) = key.key {
+                if code == u64::MAX - 1 {
+                    Color32::TRANSPARENT
                 } else {
-                    themes.themes_rendered.first()
-                };
-
-                if let Some(theme) = theme {
-                    let id = if left_side_down && right_side_down {
-                        if let Some(paws_both) = &theme.paws_both {
-                            paws_both.id()
-                        } else {
-                            TextureId::Managed(0)
-                        }
-                    } else if left_side_down {
-                        if let Some(paws_left) = &theme.paws_left {
-                            paws_left.id()
-                        } else {
-                            TextureId::Managed(0)
-                        }
-                    } else if right_side_down {
-                        if let Some(paws_right) = &theme.paws_right {
-                            paws_right.id()
-                        } else {
-                            TextureId::Managed(0)
-                        }
-                    } else if let Some(paws_up) = &theme.paws_up {
-                        paws_up.id()
-                    } else {
-                        TextureId::Managed(0)
-                    };
-
-                    ui.painter().image(id, WINDOW_RECT, UV_RECT, Color32::WHITE);
+                    Color32::WHITE
                 }
-            });
+            } else {
+                Color32::WHITE
+            };
+
+            painter.add(RectShape::new(
+                rect,
+                0.5,
+                match key.key {
+                    KeybdKey::OtherKey(v) => {
+                        if v < u64::MAX - 2
+                            && self.keystroke_state.lit_keys_map[key.key].load(Ordering::SeqCst)
+                        {
+                            if key.column < 10 {
+                                left_side_down = true;
+                            } else {
+                                right_side_down = true;
+                            }
+                            Color32::LIGHT_BLUE
+                        } else {
+                            Color32::TRANSPARENT
+                        }
+                    }
+                    _ => {
+                        if self.keystroke_state.lit_keys_map[key.key].load(Ordering::SeqCst) {
+                            if key.column < 8 {
+                                left_side_down = true;
+                            } else {
+                                right_side_down = true;
+                            }
+                            if !is_o_face {
+                                is_o_face = matches!(
+                                    key.key,
+                                    KeybdKey::OKey | KeybdKey::Numrow0Key | KeybdKey::Numpad0Key
+                                );
+                            }
+                            Color32::LIGHT_BLUE
+                        } else {
+                            Color32::TRANSPARENT
+                        }
+                    }
+                },
+                Stroke::new(1.0, color),
+                StrokeKind::Middle,
+            ));
+        }
+
+        painter.add(
+            TextShape::new(
+                Pos2::new(WINDOW_WIDTH / 20.0, WINDOW_HEIGHT / 2.0),
+                painter.layout_job(LayoutJob::simple(
+                    format!("{}", self.keystroke_state.keystrokes.load(Ordering::SeqCst)),
+                    FontId::new(WINDOW_HEIGHT / 12.5, FontFamily::Proportional),
+                    Color32::WHITE,
+                    f32::MAX,
+                )),
+                Color32::PLACEHOLDER,
+            )
+            .with_angle(0.231_605_19),
+        );
+
+        let themes = self.themes.read();
+        let theme = if is_o_face {
+            themes
+                .themes_rendered
+                .get(1)
+                .or_else(|| themes.themes_rendered.first())
+        } else {
+            themes.themes_rendered.first()
+        };
+
+        if let Some(theme) = theme {
+            let id = if left_side_down
+                && right_side_down
+                && let Some(tex) = &theme.paws_both
+            {
+                tex.id()
+            } else if left_side_down && let Some(tex) = &theme.paws_left {
+                tex.id()
+            } else if right_side_down && let Some(tex) = &theme.paws_right {
+                tex.id()
+            } else if let Some(tex) = &theme.paws_up {
+                tex.id()
+            } else {
+                TextureId::default()
+            };
+
+            painter.image(id, WINDOW_RECT, UV_RECT, Color32::WHITE);
+        }
     }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.exit_notify.store(true, Ordering::Relaxed);
+        self.exit_notify.store(true, Ordering::SeqCst);
         inputbot::stop_handling_input_events();
         self.handles.alter_all(|_, h| {
             if let Some(handle) = h {
