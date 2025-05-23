@@ -260,8 +260,6 @@ impl BongoApp {
 
 impl eframe::App for BongoApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
-        let now = Instant::now();
-
         let themes = unsafe { self.themes.as_mut_unchecked() };
         if !self.themes_rendered {
             for theme in themes.themes_rendered.iter_mut() {
@@ -409,8 +407,6 @@ impl eframe::App for BongoApp {
 
             painter.image(id, WINDOW_RECT, UV_RECT, Color32::WHITE);
         }
-
-        println!("{:?}", now.elapsed());
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
