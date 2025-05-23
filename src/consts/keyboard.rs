@@ -4,7 +4,7 @@ pub const KEY_PRESSED_LIT_DELAY: std::time::Duration = std::time::Duration::from
 
 pub const LAST_PRESSED_CLEANUP_CHECK_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(1000);
-pub const LAST_PRESSED_MAX_AGE: std::time::Duration = std::time::Duration::from_mins(1);
+pub const LAST_PRESSED_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub struct VisualKeybdKeyHolder {
     pub size: f32,
