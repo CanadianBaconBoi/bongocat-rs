@@ -1,6 +1,7 @@
-use crate::app::color_image_from_dynamic;
+use crate::app::helpers::color_image_from_dynamic;
 use egui::{ColorImage, TextureHandle};
-use std::path::PathBuf;
+use image::ImageFormat;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct ThemeSet {
@@ -12,46 +13,73 @@ pub struct ThemeSet {
 impl Default for ThemeSet {
     fn default() -> Self {
         ThemeSet {
-            themes: vec![
+            themes: vec![],
+            themes_loaded: vec![
+                AppThemeImage {
+                    app_theme: None,
+                    id: "standard".to_string(),
+                    paws_both: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/paws_both.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                    paws_left: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/paws_left.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                    paws_right: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/paws_right.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                    paws_up: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/paws_up.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                },
+                AppThemeImage {
+                    app_theme: None,
+                    id: "standard-o".to_string(),
+                    paws_both: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/o/paws_both.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                    paws_left: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/o/paws_left.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                    paws_right: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/o/paws_right.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                    paws_up: color_image_from_dynamic(
+                        image::load_from_memory_with_format(
+                            include_bytes!("../assets/frames/o/paws_up.png"),
+                            ImageFormat::Png,
+                        )
+                        .unwrap(),
+                    ),
+                },
             ],
-            themes_loaded: vec![AppThemeImage {
-                app_theme: None,
-                paws_both: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/paws_both.png")).unwrap(),
-                )
-                    .unwrap(),
-                paws_left: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/paws_left.png")).unwrap(),
-                )
-                    .unwrap(),
-                paws_right: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/paws_right.png")).unwrap(),
-                )
-                    .unwrap(),
-                paws_up: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/paws_up.png")).unwrap(),
-                )
-                    .unwrap(),
-            },
-            AppThemeImage {
-                app_theme: None,
-                paws_both: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/o/paws_both.png")).unwrap(),
-                )
-                    .unwrap(),
-                paws_left: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/o/paws_left.png")).unwrap(),
-                )
-                    .unwrap(),
-                paws_right: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/o/paws_right.png")).unwrap(),
-                )
-                    .unwrap(),
-                paws_up: color_image_from_dynamic(
-                    image::load_from_memory(include_bytes!("../assets/frames/o/paws_up.png")).unwrap(),
-                )
-                    .unwrap(),
-            }],
             themes_rendered: vec![],
         }
     }
@@ -69,6 +97,7 @@ pub struct AppThemeTexture {
 #[derive(Clone, Debug)]
 pub struct AppThemeImage {
     pub app_theme: Option<AppTheme>,
+    pub id: String,
     pub paws_both: ColorImage,
     pub paws_left: ColorImage,
     pub paws_right: ColorImage,
@@ -84,8 +113,8 @@ pub struct AppTheme {
 }
 
 impl AppTheme {
-    pub fn new<P: Into<PathBuf>>(path: P) -> Self {
-        let path = path.into();
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        let path = path.as_ref();
         let path_display = path.display();
 
         Self {

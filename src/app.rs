@@ -1,24 +1,21 @@
+//! Contains app-related things (so just about everything)
+pub mod helpers;
+mod keystroke;
+
+use crate::app::helpers::{load_color_image_from_path, load_texture_from_color_image};
+use crate::app::keystroke::KeystrokeState;
+use crate::consts::graphics::*;
+use crate::consts::keyboard::*;
 use crate::theme::{AppThemeImage, AppThemeTexture, ThemeSet};
-use crate::{KEY_PRESSED_LIT_DELAY, KEYS, UV_RECT, WINDOW_HEIGHT, WINDOW_RECT, WINDOW_WIDTH};
 use dashmap::DashMap;
 use eframe::epaint::{Pos2, RectShape, TextShape, text::LayoutJob};
-use egui::{
-    Color32, ColorImage, Context, FontFamily, FontId, Rect, Shape, Stroke, StrokeKind,
-    TextureHandle, TextureId, TextureOptions,
-};
-use enum_map::EnumMap;
-use image::DynamicImage;
+use egui::{Color32, Context, FontFamily, FontId, Rect, Shape, Stroke, StrokeKind, TextureId};
 use inputbot::KeybdKey;
-use parking_lot::{Mutex, RwLock};
-use std::path::PathBuf;
+use parking_lot::RwLock;
 use std::sync::atomic::AtomicBool;
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{Arc, OnceLock, atomic::Ordering};
 use std::thread::JoinHandle;
-use std::time::Duration;
-use std::{default::Default, ops::Add, thread, time::Instant};
+use std::{default::Default, thread, time::Instant};
 
 /// The main application state
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -32,7 +29,7 @@ pub struct BongoApp {
     context_access: OnceLock<Context>,
     /// `JoinHandle`s for threads spunup
     #[serde(skip)]
-    handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    handles: Arc<DashMap<usize, Option<JoinHandle<()>>>>,
     /// Notifies threads of exiting
     #[serde(skip)]
     exit_notify: Arc<AtomicBool>,
@@ -53,49 +50,6 @@ impl Default for BongoApp {
             exit_notify: Arc::default(),
             themes_rendered: false,
         }
-    }
-}
-
-/// The keystroke related application state
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
-pub struct KeystrokeState {
-    /// Number of total keystrokes ever
-    keystrokes: AtomicUsize,
-    /// Number of keystrokes per key
-    keystroke_map: EnumMap<KeybdKey, AtomicUsize>,
-    /// Deadline to repaint the UI due to a keypress
-    #[serde(skip)]
-    light_thread_deadline: Mutex<Option<Instant>>,
-    /// Last time keys were pressed
-    #[serde(skip)]
-    last_pressed_map: DashMap<KeybdKey, Instant>,
-}
-
-impl Default for KeystrokeState {
-    fn default() -> Self {
-        Self {
-            keystrokes: AtomicUsize::new(0),
-            keystroke_map: EnumMap::default(),
-            light_thread_deadline: Mutex::new(None),
-            last_pressed_map: DashMap::new(),
-        }
-    }
-}
-
-impl KeystrokeState {
-    pub fn log_keystroke(&self, key: &KeybdKey) {
-        let _ = *self
-            .light_thread_deadline
-            .lock()
-            .insert(Instant::now().add(KEY_PRESSED_LIT_DELAY));
-        self.keystroke_map[*key].fetch_add(1, Ordering::Relaxed);
-        self.keystrokes.fetch_add(1, Ordering::Relaxed);
-        self.last_pressed_map.insert(*key, Instant::now());
-    }
-
-    pub fn cleanup_old_keystrokes(&self, older_than: Duration) {
-        self.last_pressed_map
-            .retain(|_, instant| instant.elapsed() < older_than);
     }
 }
 
@@ -143,12 +97,12 @@ impl BongoApp {
             }
         }
 
-        arc_this.handles.lock().push(thread::spawn(|| {
+        arc_this.insert_handle_autoincrement(thread::spawn(|| {
             inputbot::handle_input_events(true);
         }));
 
         let arc_clone = arc_this.clone();
-        arc_this.handles.lock().push(thread::spawn(move || {
+        arc_this.insert_handle_autoincrement(thread::spawn(move || {
             let context = arc_clone.context_access.wait();
             loop {
                 if arc_clone.exit_notify.load(Ordering::Relaxed) {
@@ -167,12 +121,27 @@ impl BongoApp {
             }
         }));
 
+        let arc_clone = arc_this.clone();
+        arc_this.insert_handle_autoincrement(thread::spawn(move || {
+            let state = arc_clone.keystroke_state.clone();
+            loop {
+                if arc_clone.exit_notify.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::park_timeout(LAST_PRESSED_CLEANUP_CHECK_INTERVAL);
+                state.cleanup_outdated(LAST_PRESSED_MAX_AGE);
+            }
+        }));
+
         let mut theme_guard = this.themes.write();
         let themes = theme_guard.themes.clone();
 
         for theme in themes {
+            let mut id: [u8; 16] = [0; 16];
+            rand::fill(&mut id);
             theme_guard.themes_loaded.push(AppThemeImage {
                 app_theme: Some(theme.clone()),
+                id: hex::encode(id),
                 paws_both: load_color_image_from_path(&theme.paws_both),
                 paws_left: load_color_image_from_path(&theme.paws_left),
                 paws_right: load_color_image_from_path(&theme.paws_right),
@@ -195,57 +164,55 @@ impl BongoApp {
 
         this
     }
+
+    pub fn insert_handle_autoincrement(&self, handle: JoinHandle<()>) {
+        let id = self.handles.len();
+        self.handles.insert(id, Some(handle));
+    }
+    pub fn insert_handle(&self, id: usize, handle: JoinHandle<()>) {
+        self.handles.insert(id, Some(handle));
+    }
+
+    pub fn cleanup_handles(&self) {
+        self.handles.retain(|_id, handle| {
+            if let Some(handle_) = handle
+                && !handle_.is_finished()
+            {
+                true
+            } else {
+                false
+            }
+        });
+    }
 }
 
-fn load_texture_from_color_image(
-    context: &Context,
-    image: &ColorImage,
-    name: String,
-) -> TextureHandle {
-    context.load_texture(name, image.clone(), TextureOptions::LINEAR)
-}
-
-fn load_color_image_from_path(image: &PathBuf) -> ColorImage {
-    let image = image::ImageReader::open(image).unwrap().decode().unwrap();
-    color_image_from_dynamic(image).unwrap_or_else(|err| {
-        panic!("Failed to load image: {err:?}")
-    })
-}
-
-pub fn color_image_from_dynamic(image: DynamicImage) -> Result<ColorImage, anyhow::Error> {
-    let size = [image.width() as _, image.height() as _];
-    let image_buffer = image.to_rgba8();
-    let pixels = image_buffer.as_flat_samples();
-    Ok(ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()))
-}
-
-const SPACING: u64 = 10;
 impl eframe::App for BongoApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         if !self.themes_rendered {
             let mut theme_guard = self.themes.write();
-            for i in 0..theme_guard.themes_rendered.len() {
-                let theme = theme_guard.themes_rendered.get_mut(i).unwrap();
+            for theme in theme_guard.themes_rendered.iter_mut() {
                 let app_theme = &theme.app_theme_image;
                 theme.paws_both.get_or_insert(load_texture_from_color_image(
                     ctx,
                     &app_theme.paws_both,
-                    format!("paws_both_{i}"),
+                    format!("paws_both_{}", &app_theme.id),
                 ));
                 theme.paws_left.get_or_insert(load_texture_from_color_image(
                     ctx,
                     &app_theme.paws_left,
-                    format!("paws_left_{i}"),
+                    format!("paws_left_{}", &app_theme.id),
                 ));
-                theme.paws_right.get_or_insert(load_texture_from_color_image(
-                    ctx,
-                    &app_theme.paws_right,
-                    format!("paws_right_{i}"),
-                ));
+                theme
+                    .paws_right
+                    .get_or_insert(load_texture_from_color_image(
+                        ctx,
+                        &app_theme.paws_right,
+                        format!("paws_right_{}", &app_theme.id),
+                    ));
                 theme.paws_up.get_or_insert(load_texture_from_color_image(
                     ctx,
                     &app_theme.paws_up,
-                    format!("paws_up_{i}"),
+                    format!("paws_up_{}", &app_theme.id),
                 ));
             }
             drop(theme_guard);
@@ -290,7 +257,7 @@ impl eframe::App for BongoApp {
                                 ),
                                 Pos2::new(
                                     10.0 + size_offset + col_off as f32,
-                                    ((WINDOW_HEIGHT as u64 - 70 + SPACING) + row_off) as f32,
+                                    ((WINDOW_HEIGHT as u64 - 70 + PADDING_PIXELS) + row_off) as f32,
                                 ),
                             ),
                             0.5,
@@ -322,10 +289,10 @@ impl eframe::App for BongoApp {
                             Stroke::new(1.0, color),
                             StrokeKind::Middle,
                         );
-                        col_off += (SPACING as f32 * key.size) as u64;
+                        col_off += (PADDING_PIXELS as f32 * key.size) as u64;
                         shape_holder.push(shape.into());
                     }
-                    row_off += SPACING;
+                    row_off += PADDING_PIXELS;
                 }
 
                 ui.painter().add(Shape::Vec(shape_holder));
@@ -349,7 +316,10 @@ impl eframe::App for BongoApp {
 
                 let themes = self.themes.read();
                 let theme = if is_o_face {
-                    themes.themes_rendered.get(1).or_else(|| {themes.themes_rendered.first()})
+                    themes
+                        .themes_rendered
+                        .get(1)
+                        .or_else(|| themes.themes_rendered.first())
                 } else {
                     themes.themes_rendered.first()
                 };
@@ -389,6 +359,15 @@ impl eframe::App for BongoApp {
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         self.exit_notify.store(true, Ordering::Relaxed);
+        inputbot::stop_handling_input_events();
+        self.handles.alter_all(|_, h| {
+            if let Some(handle) = h {
+                handle.thread().unpark();
+                handle.join().unwrap();
+            }
+            None
+        });
+        self.cleanup_handles();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

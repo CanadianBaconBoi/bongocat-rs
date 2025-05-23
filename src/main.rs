@@ -3,12 +3,12 @@
 #![feature(stmt_expr_attributes)]
 
 use bongocat_rs::app::BongoApp;
-use bongocat_rs::{WINDOW_HEIGHT, WINDOW_WIDTH};
+use bongocat_rs::consts::graphics::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use display_info::DisplayInfo;
 use egui::WindowLevel;
 
 fn main() -> eframe::Result {
-    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
+    env_logger::init();
 
     let displays = DisplayInfo::all().unwrap();
     let primary = displays.iter().find(|d| d.is_primary).unwrap_or_else(|| {
