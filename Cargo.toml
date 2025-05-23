@@ -22,16 +22,15 @@ eframe = { version = "0.31", default-features = false, features = [
 ] }
 display-info = "0.5.4"
 egui_extras = {version = "0.31", features = ["all_loaders"]}
-inputbot = { version = "0.6.0", features = ["serde"] }
+inputbot = {  path = "lib/InputBot", version = "0.6.0", features = ["serde"] }
 dashmap = {version = "7.0.0-rc2", features = ["serde"]}
 parking_lot = {version = "0.12.3", features = ["serde"]}
-enum-map = {version = "3.0.0-beta.2", features = ["serde"]}
+enum-map = {path = "lib/enum-map/enum-map", version = "3.0.0-beta.2", features = ["serde"]}
 
 # You only need serde if you want app persistence:
 serde = { version = "1.0.219", features = ["derive"] }
 image = {version = "0.25.6", features = ["serde"]}
-rand = "0.9.1"
-hex = "0.4.3"
+log = "0.4.27"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -48,5 +47,3 @@ opt-level = 2
 egui = { git = "https://github.com/emilk/egui", branch = "main" }
 eframe = { git = "https://github.com/emilk/egui", branch = "main" }
 egui_extras = { git = "https://github.com/emilk/egui", branch = "main" }
-inputbot = { path = "lib/InputBot" }
-enum-map = { path = "lib/enum-map/enum-map" }

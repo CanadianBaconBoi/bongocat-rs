@@ -1,14 +1,17 @@
 #![warn(clippy::all, rust_2018_idioms)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide the console window on Windows in release
+//#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide the console window on Windows in release
 #![feature(stmt_expr_attributes)]
 
 use bongocat_rs::app::BongoApp;
 use bongocat_rs::consts::graphics::{WINDOW_HEIGHT, WINDOW_WIDTH};
 use display_info::DisplayInfo;
 use egui::WindowLevel;
+use env_logger::Env;
 
 fn main() -> eframe::Result {
     env_logger::init();
+
+    println!("{:?}", Env::default());
 
     let displays = DisplayInfo::all().unwrap();
     let primary = displays

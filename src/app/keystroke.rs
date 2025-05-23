@@ -40,11 +40,11 @@ impl Default for KeystrokeState {
 
 impl KeystrokeState {
     pub fn log_keystroke(&self, key: &KeybdKey) {
-        self.keystroke_map[*key].fetch_add(1, Ordering::SeqCst);
-        self.keystrokes.fetch_add(1, Ordering::SeqCst);
+        self.keystroke_map[*key].fetch_add(1, Ordering::Relaxed);
+        self.keystrokes.fetch_add(1, Ordering::Relaxed);
         self.last_pressed_map.insert(*key, Instant::now());
 
-        self.lit_keys_map[*key].store(true, Ordering::SeqCst);
+        self.lit_keys_map[*key].store(true, Ordering::Relaxed);
 
         if let Some(thread) = self.input_update_thread.lock().deref() {
             thread.unpark();
@@ -58,7 +58,10 @@ impl KeystrokeState {
         self.last_pressed_map.retain(|key, instant| {
             let keep = *instant > threshold;
             if !keep {
-                self.lit_keys_map[*key].store(false, Ordering::SeqCst);
+                if let Some(thread) = self.input_update_thread.lock().deref() {
+                    thread.unpark();
+                }
+                self.lit_keys_map[*key].store(false, Ordering::Release);
             }
             keep
         });

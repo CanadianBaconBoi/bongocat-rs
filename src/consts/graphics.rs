@@ -7,3 +7,4 @@ pub const WINDOW_RECT: egui::Rect = egui::Rect::from_min_max(
 );
 pub const UV_RECT: egui::Rect =
     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0));
+pub const CAT_ANGLE: f32 = 0.231_605_19;

@@ -2,6 +2,7 @@ use crate::app::helpers::color_image_from_dynamic;
 use egui::{ColorImage, TextureHandle};
 use image::ImageFormat;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub struct ThemeSet {
     pub themes: Vec<AppTheme>,
@@ -15,8 +16,7 @@ impl Default for ThemeSet {
             themes: vec![],
             themes_loaded: vec![
                 AppThemeImage {
-                    app_theme: None,
-                    id: "standard".to_string(),
+                    id: "standard".to_string().into(),
                     paws_both: color_image_from_dynamic(
                         image::load_from_memory_with_format(
                             include_bytes!("../assets/frames/paws_both.png"),
@@ -47,8 +47,7 @@ impl Default for ThemeSet {
                     ),
                 },
                 AppThemeImage {
-                    app_theme: None,
-                    id: "standard-o".to_string(),
+                    id: "standard-o".to_string().into(),
                     paws_both: color_image_from_dynamic(
                         image::load_from_memory_with_format(
                             include_bytes!("../assets/frames/o/paws_both.png"),
@@ -85,7 +84,7 @@ impl Default for ThemeSet {
 }
 
 pub struct AppThemeTexture {
-    pub app_theme_image: &'static AppThemeImage,
+    pub id: Arc<String>,
     pub paws_both: Option<TextureHandle>,
     pub paws_left: Option<TextureHandle>,
     pub paws_right: Option<TextureHandle>,
@@ -93,8 +92,7 @@ pub struct AppThemeTexture {
 }
 
 pub struct AppThemeImage {
-    pub app_theme: Option<&'static AppTheme>,
-    pub id: String,
+    pub id: Arc<String>,
     pub paws_both: ColorImage,
     pub paws_left: ColorImage,
     pub paws_right: ColorImage,
@@ -102,6 +100,7 @@ pub struct AppThemeImage {
 }
 
 pub struct AppTheme {
+    pub id: Arc<String>,
     pub paws_both: PathBuf,
     pub paws_left: PathBuf,
     pub paws_right: PathBuf,
@@ -109,11 +108,12 @@ pub struct AppTheme {
 }
 
 impl AppTheme {
-    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+    pub fn new<P: AsRef<Path>>(id: String, path: P) -> Self {
         let path = path.as_ref();
         let path_display = path.display();
 
         Self {
+            id: id.into(),
             paws_both: format!("{path_display}/paws_both.png").into(),
             paws_left: format!("{path_display}/paws_left.png").into(),
             paws_right: format!("{path_display}/paws_right.png").into(),
