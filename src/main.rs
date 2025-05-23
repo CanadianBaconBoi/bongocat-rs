@@ -11,14 +11,18 @@ fn main() -> eframe::Result {
     env_logger::init();
 
     let displays = DisplayInfo::all().unwrap();
-    let primary = displays.iter().find(|d| d.is_primary).unwrap_or_else(|| {
-        displays
-            .first()
-            .unwrap_or_else(|| panic!("Could not find primary display"))
-    }).clone();
+    let primary = displays
+        .iter()
+        .find(|d| d.is_primary)
+        .unwrap_or_else(|| {
+            displays
+                .first()
+                .unwrap_or_else(|| panic!("Could not find primary display"))
+        })
+        .clone();
 
     let native_options = eframe::NativeOptions {
-        window_builder: Some(Box::new(move |builder|{
+        window_builder: Some(Box::new(move |builder| {
             builder.with_position([
                 (primary.x + (primary.width as i32)) as f32 - WINDOW_HEIGHT,
                 (primary.y + (primary.height as i32)) as f32 - WINDOW_WIDTH,
