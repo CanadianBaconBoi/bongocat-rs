@@ -317,7 +317,7 @@ impl eframe::App for BongoApp {
                         if v < u64::MAX - 2
                             && self.keystroke_state.lit_keys_map[key.key].load(Ordering::Relaxed)
                         {
-                            if key.column < 10 {
+                            if key.column < 7 {
                                 left_side_down = true;
                             } else {
                                 right_side_down = true;
@@ -329,7 +329,7 @@ impl eframe::App for BongoApp {
                     }
                     _ => {
                         if self.keystroke_state.lit_keys_map[key.key].load(Ordering::Relaxed) {
-                            if key.column < 8 {
+                            if key.column < 7 {
                                 left_side_down = true;
                             } else {
                                 right_side_down = true;
