@@ -1,3 +1,5 @@
+ignore = ["lib"]
+
 # Forces usage of tabs for indentation
 hard_tabs = true
 edition = "2024"

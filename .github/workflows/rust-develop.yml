@@ -18,12 +18,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+      - uses: abbbi/github-actions-tune@v1
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           override: true
-      - run: sudo apt-get install libudev-dev libx11-dev libxtst-dev libinput-dev
+      - run: |
+          sudo apt-get update
+          sudo apt-get install libudev-dev libx11-dev libxtst-dev libinput-dev
       - uses: actions-rs/cargo@v1
         with:
           command: check
@@ -36,12 +39,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+      - uses: abbbi/github-actions-tune@v1
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           override: true
-      - run: sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libudev-dev libx11-dev libxtst-dev libinput-dev
+      - run: |
+          sudo apt-get update
+          sudo apt-get install libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libssl-dev libudev-dev libx11-dev libxtst-dev libinput-dev
       - uses: actions-rs/cargo@v1
         with:
           command: test
@@ -54,13 +60,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+      - uses: abbbi/github-actions-tune@v1
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           override: true
           components: rustfmt
-      - run: sudo apt-get install libudev-dev libx11-dev libxtst-dev libinput-dev
+      - run: |
+          sudo apt-get update
+          sudo apt-get install libudev-dev libx11-dev libxtst-dev libinput-dev
       - uses: actions-rs/cargo@v1
         with:
           command: fmt
@@ -73,13 +82,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: 'recursive'
+      - uses: abbbi/github-actions-tune@v1
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
           toolchain: nightly
           override: true
           components: clippy
-      - run: sudo apt-get install libudev-dev libx11-dev libxtst-dev libinput-dev
+      - run: |
+          sudo apt-get update
+          sudo apt-get install libudev-dev libx11-dev libxtst-dev libinput-dev
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
